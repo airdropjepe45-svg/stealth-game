@@ -182,6 +182,25 @@ function runGame() {
       isBest: !!world.winIsBest,
       rating: clearInfo?.rating ?? 'GHOST',
     };
+    // Readout for automated playtests (and nothing else): the screen,
+    // the wing, the lives left, and the thief's position in pixels.
+    window.__game = {
+      screen,
+      level: levelIndex,
+      lives,
+      px: world.player.x,
+      py: world.player.y,
+      sneaking: world.player.sneaking,
+      moving: world.player.moving,
+      alert: world.alertLevel,
+      pebbles: world.player.pebbles,
+      guards: world.guards.map((g) => ({
+        x: Math.round(g.x),
+        y: Math.round(g.y),
+        facing: g.facing,
+        state: g.state,
+      })),
+    };
     draw(renderer, world, screen, extra);
     status.textContent =
       screen === SCREEN_PLAY

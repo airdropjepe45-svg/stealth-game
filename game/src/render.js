@@ -5,6 +5,12 @@ import { TILE, COLS, ROWS, HUD_H, VIEW_W, VIEW_H, COLORS } from './config.js';
 import { conePolygon } from './vision.js';
 import { GUARD_ALERTED_STATE, GUARD_SUSPICIOUS_STATE } from './guards.js';
 import { exitIsOpen } from './world.js';
+import { buildNightMask, drawLampPools, drawLampGlow, drawShadowPools } from './lighting.js';
+import { floorShade, drawFloorMarks, drawRugs, drawPaintings, drawPlants, drawStatues } from './decor.js';
+
+// The night mask is built once per level and reused every frame.
+let maskLevel = -1;
+let maskCanvas = null;
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -37,18 +43,13 @@ function drawFloor(renderer, world) {
     for (let c = 0; c < COLS; c += 1) {
       const x = c * TILE;
       const y = HUD_H + r * TILE;
-      const even = (c + r) % 2 === 0;
-      ctx.fillStyle = even ? COLORS.floorA : COLORS.floorB;
+      ctx.fillStyle = floorShade(c, r);
       ctx.fillRect(x, y, TILE, TILE);
+      drawFloorMarks(ctx, c, r);
       ctx.strokeStyle = COLORS.floorLine;
       ctx.lineWidth = 1;
       ctx.strokeRect(x + 0.5, y + 0.5, TILE - 1, TILE - 1);
     }
-  }
-  // Lamplight pools on the floor, pure decoration.
-  for (const s of level.shadows) {
-    ctx.fillStyle = COLORS.shadow;
-    ctx.fillRect(s.x * TILE, HUD_H + s.y * TILE, s.w * TILE, s.h * TILE);
   }
 }
 
@@ -63,9 +64,13 @@ function drawWalls(renderer, world) {
     ctx.fillRect(x, y, TILE, TILE);
     ctx.fillStyle = COLORS.wallTop;
     ctx.fillRect(x, y, TILE, 5);
+    // A gilt skirting line where the wall meets the floor.
+    ctx.fillStyle = COLORS.wallTrim;
+    ctx.fillRect(x, y + TILE - 3, TILE, 2);
     ctx.strokeStyle = 'rgba(0,0,0,0.35)';
     ctx.strokeRect(x + 0.5, y + 0.5, TILE - 1, TILE - 1);
   }
+  drawPaintings(ctx, level);
 }
 
 function drawCrates(renderer, world) {
@@ -134,11 +139,38 @@ function drawExit(renderer, world) {
   }
 }
 
+function drawExitGlow(renderer, world) {
+  const { ctx } = renderer;
+  const { exit } = world.level;
+  if (!exit || !exitIsOpen(world)) return;
+  const cx = exit.col * TILE + TILE / 2;
+  const cy = HUD_H + exit.row * TILE + TILE / 2;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(cx, cy, 6, cx, cy, 110);
+  g.addColorStop(0, 'rgba(57, 217, 138, 0.20)');
+  g.addColorStop(1, 'rgba(57, 217, 138, 0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 110, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawPickup(renderer, world, point, kind) {
   const { ctx } = renderer;
   if (!point) return;
   const cx = point.col * TILE + TILE / 2;
   const cy = HUD_H + point.row * TILE + TILE / 2;
+  // The Star Sapphire rests on a stone plinth; the key hangs bare.
+  if (kind === 'sapphire') {
+    ctx.fillStyle = COLORS.statueBase;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 12, 16, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = COLORS.statue;
+    ctx.fillRect(cx - 10, cy + 2, 20, 10);
+  }
   ctx.save();
   ctx.shadowColor = kind === 'key' ? COLORS.key : '#7ec8ff';
   ctx.shadowBlur = 16;
@@ -169,12 +201,22 @@ function drawCones(renderer, world) {
         : guard.state === GUARD_SUSPICIOUS_STATE
           ? COLORS.coneSuspicious
           : COLORS.coneCalm;
+    const edge =
+      guard.state === GUARD_ALERTED_STATE
+        ? COLORS.coneEdgeAlerted
+        : guard.state === GUARD_SUSPICIOUS_STATE
+          ? COLORS.coneEdgeSuspicious
+          : COLORS.coneEdgeCalm;
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.moveTo(shifted[0].x, shifted[0].y);
     for (let i = 1; i < shifted.length; i += 1) ctx.lineTo(shifted[i].x, shifted[i].y);
     ctx.closePath();
     ctx.fill();
+    // A bright rim so the cone's edge reads at a glance, even in the dark.
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = 2;
+    ctx.stroke();
   }
 }
 
@@ -198,8 +240,14 @@ function drawGuard(renderer, guard) {
   const { ctx } = renderer;
   const x = guard.x;
   const y = HUD_H + guard.y;
-  // Body: a night watchman in a dark red coat.
-  ctx.fillStyle = COLORS.guardDark;
+  // A pale ring under the guard, so he reads against any floor, lit or dark.
+  ctx.strokeStyle = COLORS.guardRing;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, 19, 0, Math.PI * 2);
+  ctx.stroke();
+  // Body: a night watchman in a dark navy coat over a red tunic.
+  ctx.fillStyle = COLORS.guardCoat;
   ctx.beginPath();
   ctx.arc(x, y, 17, 0, Math.PI * 2);
   ctx.fill();
@@ -207,12 +255,24 @@ function drawGuard(renderer, guard) {
   ctx.beginPath();
   ctx.arc(x, y, 13, 0, Math.PI * 2);
   ctx.fill();
-  // The direction he is facing: a pale cap brim.
-  ctx.strokeStyle = '#ffd9d0';
-  ctx.lineWidth = 4;
+  // Brass buttons down the tunic.
+  ctx.fillStyle = COLORS.guardButton;
   ctx.beginPath();
-  ctx.moveTo(x + Math.cos(guard.facing) * 8, y + Math.sin(guard.facing) * 8);
-  ctx.lineTo(x + Math.cos(guard.facing) * 18, y + Math.sin(guard.facing) * 18);
+  ctx.arc(x, y - 4, 1.8, 0, Math.PI * 2);
+  ctx.arc(x, y + 3, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  // A pale face looking the way he faces, under a dark cap with a brim.
+  const fx = Math.cos(guard.facing);
+  const fy = Math.sin(guard.facing);
+  ctx.fillStyle = COLORS.guardFace;
+  ctx.beginPath();
+  ctx.arc(x + fx * 7, y + fy * 7, 5.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = COLORS.guardDark;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(x + fx * 10, y + fy * 10);
+  ctx.lineTo(x + fx * 19, y + fy * 19);
   ctx.stroke();
   // Detection meter arc over his head.
   if (guard.meter > 0.04) {
@@ -243,6 +303,12 @@ function drawPlayer(renderer, world) {
   const y = HUD_H + player.y;
   const bob = player.moving ? Math.sin(player.stepPhase) * 1.5 : 0;
   const r = player.sneaking ? 11 : 13;
+  // A pale ring under Wren, so the thief reads against any floor.
+  ctx.strokeStyle = COLORS.playerRing;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y + bob, r + 5, 0, Math.PI * 2);
+  ctx.stroke();
   ctx.fillStyle = COLORS.playerCloak;
   ctx.beginPath();
   ctx.arc(x, y + bob, r + 3, 0, Math.PI * 2);
@@ -343,7 +409,14 @@ function drawHud(renderer, world) {
 }
 
 function drawPlay(renderer, world) {
+  // Floor first: marble, rugs, deep shadow pools, then lamplight.
   drawFloor(renderer, world);
+  drawRugs(renderer.ctx, world.level);
+  drawShadowPools(renderer.ctx, world.level);
+  drawLampPools(renderer.ctx, world.level);
+  drawPlants(renderer.ctx, world.level);
+  drawStatues(renderer.ctx, world.level);
+  drawWalls(renderer, world);
   drawExit(renderer, world);
   if (world.level.key && !world.keyTaken) {
     drawPickup(renderer, world, world.level.key, 'key');
@@ -353,8 +426,17 @@ function drawPlay(renderer, world) {
   }
   drawBushes(renderer, world);
   drawCrates(renderer, world);
-  drawWalls(renderer, world);
+  // Night falls over the room: the cached mask darkens everything
+  // except the lamplight pools. Cones, actors and the HUD are painted
+  // after it, so they stay bright and readable in the dark.
+  if (maskLevel !== world.level.index || !maskCanvas) {
+    maskCanvas = buildNightMask(world.level);
+    maskLevel = world.level.index;
+  }
+  renderer.ctx.drawImage(maskCanvas, 0, 0);
+  drawLampGlow(renderer.ctx, world.level);
   drawCones(renderer, world);
+  drawExitGlow(renderer, world);
   drawPebbleMarks(renderer, world);
   for (const guard of world.guards) drawGuard(renderer, guard);
   drawPlayer(renderer, world);

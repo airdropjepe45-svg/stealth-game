@@ -28,7 +28,34 @@ const MAPS = [
       { start: [10, 5], waypoints: [[10, 5], [15, 5]], pause: 1.4 },
       { start: [3, 9], waypoints: [[3, 9], [8, 9]], pause: 1.2 },
     ],
-    shadows: [{ x: 2, y: 8, w: 4, h: 1 }],
+    shadows: [
+      { x: 1, y: 7, w: 2, h: 1 },
+      { x: 9, y: 2, w: 2, h: 1 },
+    ],
+    // Hanging lamps (tile centres; radius in tiles) — their pools of
+    // warm light are the bright ground; the dark between them is cover.
+    lamps: [
+      { c: 5, r: 2, radius: 2.2 },
+      { c: 14, r: 2, radius: 2.2 },
+      { c: 5, r: 8, radius: 2.2 },
+      { c: 14, r: 8, radius: 2.2 },
+    ],
+    // Flat red-carpet runners on floor tiles (decoration only).
+    rugs: [
+      { x: 4, y: 1, w: 1, h: 9 },
+      { x: 10, y: 4, w: 5, h: 1 },
+    ],
+    // Potted plants and statues at floor-tile corners (decoration only).
+    plants: [
+      { c: 1, r: 2 },
+      { c: 18, r: 2 },
+      { c: 1, r: 8 },
+      { c: 18, r: 8 },
+    ],
+    statues: [
+      { c: 10, r: 3 },
+      { c: 16, r: 6 },
+    ],
   },
   {
     name: 'Hall of Kings',
@@ -55,8 +82,29 @@ const MAPS = [
       { start: [16, 8], waypoints: [[16, 8], [18, 8]], pause: 1.6 },
     ],
     shadows: [
-      { x: 1, y: 8, w: 3, h: 1 },
-      { x: 14, y: 2, w: 3, h: 1 },
+      { x: 1, y: 6, w: 2, h: 1 },
+      { x: 10, y: 2, w: 2, h: 1 },
+      { x: 10, y: 8, w: 2, h: 1 },
+    ],
+    lamps: [
+      { c: 4, r: 2, radius: 2.2 },
+      { c: 15, r: 2, radius: 2.2 },
+      { c: 4, r: 8, radius: 2.2 },
+      { c: 15, r: 8, radius: 2.2 },
+    ],
+    rugs: [
+      { x: 2, y: 1, w: 1, h: 9 },
+      { x: 10, y: 6, w: 5, h: 1 },
+    ],
+    plants: [
+      { c: 1, r: 5 },
+      { c: 18, r: 3 },
+      { c: 18, r: 6 },
+      { c: 1, r: 8 },
+    ],
+    statues: [
+      { c: 10, r: 2 },
+      { c: 16, r: 5 },
     ],
   },
   {
@@ -85,8 +133,29 @@ const MAPS = [
       { start: [5, 7], waypoints: [[5, 7], [5, 3]], pause: 1.4 },
     ],
     shadows: [
-      { x: 1, y: 6, w: 3, h: 1 },
-      { x: 16, y: 3, w: 2, h: 2 },
+      { x: 1, y: 5, w: 2, h: 1 },
+      { x: 16, y: 5, w: 2, h: 1 },
+      { x: 9, y: 8, w: 3, h: 1 },
+    ],
+    lamps: [
+      { c: 4, r: 2, radius: 2.2 },
+      { c: 15, r: 2, radius: 2.2 },
+      { c: 4, r: 8, radius: 2.2 },
+      { c: 15, r: 8, radius: 2.2 },
+    ],
+    rugs: [
+      { x: 2, y: 1, w: 1, h: 9 },
+      { x: 2, y: 4, w: 5, h: 1 },
+    ],
+    plants: [
+      { c: 1, r: 2 },
+      { c: 18, r: 2 },
+      { c: 1, r: 8 },
+      { c: 18, r: 8 },
+    ],
+    statues: [
+      { c: 10, r: 1 },
+      { c: 16, r: 4 },
     ],
   },
 ];
@@ -122,6 +191,21 @@ export function parseLevelMap(rows) {
 export function buildLevel(index) {
   const def = MAPS[index];
   const parsed = parseLevelMap(def.map);
+  // Paintings hang on wall tiles that face the room (walkable tile
+  // below), a deterministic subset so the gallery reads the same every
+  // run. Kinds cycle landscape / portrait / seascape.
+  const kinds = ['landscape', 'portrait', 'seascape'];
+  const paintings = [];
+  for (let r = 0; r < def.map.length; r += 1) {
+    for (let c = 0; c < def.map[r].length; c += 1) {
+      if (paintings.length >= 8) break;
+      if (!parsed.walls.has(`${c},${r}`)) continue;
+      const below = `${c},${r + 1}`;
+      if (parsed.walls.has(below) || parsed.crates.has(below)) continue;
+      if ((c + r) % 3 !== 0) continue;
+      paintings.push({ c, r, kind: kinds[(c * 7 + r) % 3] });
+    }
+  }
   return {
     index,
     name: def.name,
@@ -132,6 +216,11 @@ export function buildLevel(index) {
     rows: def.map,
     guards: def.guards,
     shadows: def.shadows,
+    lamps: def.lamps,
+    rugs: def.rugs,
+    plants: def.plants,
+    statues: def.statues,
+    paintings,
     ...parsed,
   };
 }
